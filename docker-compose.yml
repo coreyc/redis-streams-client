@@ -5,4 +5,23 @@ services:
     container_name: redis
     ports:
       - 6379:6379
-    
+  
+  c1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: c1
+    volumes:
+      - .:/container
+      - /container/node_modules
+    depends_on: [ redis ]
+
+  c2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: c2
+    volumes:
+      - .:/container
+      - /container/node_modules
+    depends_on: [ redis ]

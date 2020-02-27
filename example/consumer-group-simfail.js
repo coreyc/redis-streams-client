@@ -18,9 +18,5 @@ const run = async () => {
 
 // cleanup step just for testing
 await streamsClient.deleteConsumerGroup(STREAM_NAME, GROUP_NAME)
-// purposefully don't await
-run()
 
-// setInterval(() => {
-//   console.log('interval to simulate other processing in thread')
-// }, 500)
+run()

@@ -1,7 +1,13 @@
 import RedisStreamsClient from '../src/'
 
-const streamsClient = new RedisStreamsClient(6379, "redis")
+const streamsClient = new RedisStreamsClient({
+  post: 6379,
+  host: process.env.REDIS_HOST
+})
 
-await streamsClient.publish('mystream', {says: 'hiiiii there'})
+for (let i = 0; i < 10; i++) {
+  await streamsClient.publish('mystream', {says: i})
+}
+
 const val = await streamsClient.getRange('mystream')
 console.log(val)

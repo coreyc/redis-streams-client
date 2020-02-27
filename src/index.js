@@ -5,7 +5,12 @@ import IOredis from 'ioredis'
 import { mapObjToStringArray } from '../util'
 
 process.env.SHOULD_PROCESS = true
+process.env.GROUP_NAME
 
+// xreadgroup puts items onto PEL
+// xack removes those items from the PEL
+
+// TODO: pull out private functions to top and don't export, bind in class
 
 export default class RedisStreamsClient {
   constructor(options) {
@@ -28,13 +33,9 @@ export default class RedisStreamsClient {
   }
 
   ack(stream_name, group_name, id) {
-    // const group_name = stream_name + 'Group'
-
     // XACK [stream name] [group name] [id]
     return this.redis.xack(stream_name, group_name, id)
   }
-
-  addId() {}
 
   // should this be part of the API?
   removeDeadConsumer() {
@@ -80,7 +81,7 @@ export default class RedisStreamsClient {
   }
 
   readFromConsumerGroup(group_name, stream_name) {
-    // XREADGROUP GROUP [group name] *COUNT [n]* [consumer name] STREAMS [stream name] >
+    // XREADGROUP GROUP [group name] *COUNT [n]* [consumer name] STREAMS [stream name] >/0
     return this.redis.xreadgroup('GROUP', group_name, this.consumer_name, 'COUNT', 1, 'STREAMS', stream_name, '>')
   }
 
@@ -105,36 +106,40 @@ export default class RedisStreamsClient {
     // XGROUP CREATE [stream name] [group name] $ *[MKSTREAM]*
     // MKSTREAM creates the stream if it doesn't exist yet
     // need to make sure that creating a stream post-MKSTREAM doesn't conflict
-    return this.redis.xgroup('CREATE', stream_name, group_name, 0)
+    return this.redis.xgroup('CREATE', stream_name, group_name, '$')
   }
 
   deformat(stream_data) {
-    // TODO: quick hack
+    // TODO: quick hack, make it better
     return stream_data.pop()[1]
   }
 
   // TODO: should this method be up to the client to implement?
   async subscribe(group_name, stream_name, processItem) {
+    
     // safety flag to turn off processing of messages if something goes pear-shaped
     if (process.env.SHOULD_PROCESS) {
-      await this.createConsumerGroup(stream_name, group_name)
+
+      // ensure consumer group exists and ignore error if it already does
+      try {
+        await this.createConsumerGroup(stream_name, group_name)
+      } catch (e) {
+        // ignore
+      }
 
       while (true) {
         const stream_data = await this.readFromConsumerGroup(group_name, stream_name)
 
         if (!stream_data || stream_data.length === 0) {
-          console.log('empty')
           continue
         } else {
           const formatted_data = this.deformat(stream_data)
 
           for (const item of formatted_data) {
             try {
-              console.log('item:', item)
-
               const [id, data] = item
               
-              await processItem(data)
+              await processItem(item)
               await this.ack(stream_name, group_name, id)
 
               continue

@@ -1,12 +1,15 @@
 import RedisStreamsClient from '../src/'
 
-const streamsClient = new RedisStreamsClient(6379, 'redis')
+const streamsClient = new RedisStreamsClient({
+  post: 6379,
+  host: process.env.REDIS_HOST
+})
 
 const STREAM_NAME = 'mystream'
 const GROUP_NAME = 'mygroup'
 
-const processItem = async (item) => {
-  console.log('item processed:', JSON.stringify(item))
+const processItem = async ([id, data]) => {
+  console.log('item processed:', id, 'data:', data)
 }
 
 const run = async () => {
@@ -15,9 +18,5 @@ const run = async () => {
 
 // cleanup step just for testing
 await streamsClient.deleteConsumerGroup(STREAM_NAME, GROUP_NAME)
-// purposefully don't await
-run()
 
-// setInterval(() => {
-//   console.log('interval to simulate other processing in thread')
-// }, 500)
+run()
