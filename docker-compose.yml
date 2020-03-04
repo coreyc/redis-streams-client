@@ -5,12 +5,25 @@ services:
     container_name: redis
     ports:
       - 6379:6379
-  
+
+  p1:
+    build:
+      context: .
+      dockerfile: Dockerfile.producer
+    container_name: p1
+    volumes:
+      - .:/container
+      - /container/node_modules
+    logging:
+      driver: none
+    depends_on: [ redis ]
+
   c1:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.consumer
     container_name: c1
+    command: npm run start:cg
     volumes:
       - .:/container
       - /container/node_modules
@@ -19,8 +32,31 @@ services:
   c2:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.consumer
     container_name: c2
+    command: npm run start:cg
+    volumes:
+      - .:/container
+      - /container/node_modules
+    depends_on: [ redis ]
+
+  cFail:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    container_name: cFail
+    command: npm run start:cg-simfail
+    volumes:
+      - .:/container
+      - /container/node_modules
+    depends_on: [ redis ]
+  
+  claimer:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    container_name: claimer
+    command: npm run start:claimer
     volumes:
       - .:/container
       - /container/node_modules

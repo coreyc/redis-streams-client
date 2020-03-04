@@ -11,12 +11,13 @@ process.env.GROUP_NAME
 // xack removes those items from the PEL
 
 // TODO: pull out private functions to top and don't export, bind in class
+// TODO: order methods alphabetically or by similar action
 
 export default class RedisStreamsClient {
   constructor(options) {
     this.connect(options)
-    this.pendingTime = 60000
-    this.consumer_name = this.getConsumerName()
+    this.pending_time = 60000
+    this.consumer_name = options.consumer_name || this.getConsumerName()
   }
 
   connect(options) {
@@ -38,7 +39,7 @@ export default class RedisStreamsClient {
   }
 
   // should this be part of the API?
-  removeDeadConsumer() {
+  removeStaleConsumer() {
     // for when a consumer hasn't checked in in a while
 
     // use hash and set auto-delete / expire?
@@ -50,9 +51,12 @@ export default class RedisStreamsClient {
     // XGROUP DELCONSUMER mystream consumer-group-name myconsumer123
   }
 
-  getConsumerName(name = '') {
+  getConsumerName() {
     // should this be a uuid for safety? rely on xclaim to pick up and assume container will get new consumer_name everytime?
-    return name || os.hostname()
+    
+    // what should we fall back to if os.hostname() fails? uuid?
+    // CAN os.hostname() fail?
+    return os.hostname()
   }
 
   // TODO: better optional arg ordering
@@ -91,7 +95,6 @@ export default class RedisStreamsClient {
     return this.redis.xgroup('DESTROY', stream_name, consumer_group)
   }
 
-  // TODO: order methods alphabetically or by similar action
   getPending(stream_name, group_name, count) {
     // XPENDING [stream name] [group name] - + [count] [consumer name]
     return this.redis.xpending(stream_name, group_name, '-', '+', count, this.consumer_name)
@@ -99,7 +102,7 @@ export default class RedisStreamsClient {
 
   claim(stream_name, group_name, id) {
     // XCLAIM [stream name] [group name] [consumer name] [min pending time] [id]
-    return this.redis.xclaim(stream_name, group_name, this.consumer_name, this.pendingTime, id)
+    return this.redis.xclaim(stream_name, group_name, this.consumer_name, this.pending_time, id)
   }
 
   createConsumerGroup(stream_name, group_name) {
@@ -116,7 +119,6 @@ export default class RedisStreamsClient {
 
   // TODO: should this method be up to the client to implement?
   async subscribe(group_name, stream_name, processItem) {
-    
     // safety flag to turn off processing of messages if something goes pear-shaped
     if (process.env.SHOULD_PROCESS) {
 
@@ -138,7 +140,7 @@ export default class RedisStreamsClient {
           for (const item of formatted_data) {
             try {
               const [id, data] = item
-              
+
               await processItem(item)
               await this.ack(stream_name, group_name, id)
 
@@ -146,6 +148,7 @@ export default class RedisStreamsClient {
             } catch (e) {
               console.error(e)
               // TODO: throw it back? or handle here
+              continue
             }
           }
         }

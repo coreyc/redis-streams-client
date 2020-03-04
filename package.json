@@ -7,6 +7,9 @@
     "start:producer": "node -r esm example/producer.js",
     "start:consumer": "node -r esm example/consumer.js",
     "start:cg": "node -r esm example/consumer-group.js",
+    "start:cg-simfail": "node -r esm example/consumer-group-simfail.js",
+    "start:cg-exit": "node -r esm example/consumer-group-exit.js",
+    "start:claimer": "node -r esm example/claimer.js",
     "test": "NODE_ENV=test mocha --watch -r esm test/**/*.test.js"
   },
   "author": "Corey Cleary",

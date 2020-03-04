@@ -14,4 +14,4 @@ ADD ./package-lock.json /container/
 RUN echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ".npmrc"
 RUN npm install
 ADD . /container
-CMD ["npm", "run", "start:cg"]
+CMD ["npm", "run", "start:producer"]
