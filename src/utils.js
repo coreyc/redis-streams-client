@@ -74,7 +74,14 @@ const deserialize = (streamData) => {
   });
 };
 
+const getPendingItemsFormatted = (pendingItems = []) => {
+  return pendingItems.map(([itemId, consumerName, timeSinceLastDelivery, numDeliveries]) => ({
+    itemId, consumerName, timeSinceLastDelivery, numDeliveries
+  }))
+}
+
 module.exports = {
   mapObjToStringArray,
   deserialize,
+  getPendingItemsFormatted,
 };

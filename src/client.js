@@ -23,18 +23,17 @@ const READ_GROUP_EVENT_ID = {
 
 let redis;
 
-function setOptions(options) {
+function setConfiguration(overridenConfig) {
   const defaults = {
     pendingInterval: 60 * 10 * 1000, // 10 minutes
+    pendingItemsCount: 20,
     maxIdleTime: 60 * 120 * 1000, // 2 hours
     consumerName: os.hostname(),
-    shouldProcess: true,
     shouldBlock: false,
     maxStreamLength: 5000,
-    isConsumer: false,
   };
 
-  return Object.assign(defaults, options);
+  return Object.assign(defaults, overridenConfig);
 }
 
 function connect(ctxOptions) {
@@ -157,17 +156,22 @@ function readFromConsumerGroup({
  * @param {string} streamName - Name (sometimes referred to as the "key") of the stream
  * @param {string} groupName - Name of the consumer group
  * @param {integer} count - Count of pending items to look for
- * @param {string} consumerName - Name of the consumer itself (not the group)
  */
-// function getPending({
-//   streamName, groupName, count, consumerName,
-// }) {
-//   return redis.xpending(streamName, groupName, '-', '+', count, consumerName);
-// }
+function getPending({
+  streamName, groupName, count,
+}) {
+  return redis.xpending(streamName, groupName, '-', '+', count);
+}
 
 /**
  * This command changes the ownership of a pending message,
  * so that the new owner is the consumer specified as the command argument.
+ * 
+ * The 'pendingTime' argument is provided so that the operation will only work if the
+ * idle time of the mentioned messages is greater than the specified idle time. This is useful
+ * because maybe two clients are retrying to claim a message at the same time.
+ * As a side effect, claiming a message will reset its idle time and will increment its number of
+ * deliveries counter, so the second client will fail claiming it, which is desired.
  *
  * <pre>
  * XCLAIM [stream name] [group name] [consumer name] [min-idle-time] [id]
@@ -176,14 +180,16 @@ function readFromConsumerGroup({
  * @param {string} streamName - Name (sometimes referred to as the "key") of the stream
  * @param {string} groupName - Name of the consumer group
  * @param {string} consumerName - Name of the consumer itself (not the group)
- * @param {integer} pendingTime - Idle time of event
- * @param {string} id - ID of the event
+ * @param {integer} pendingTime - Idle time of item
+ * @param {string} itemId - ID of the item
  */
-// function claim({
-//   streamName, groupName, consumerName, pendingTime, id,
-// }) {
-//   return redis.xclaim(streamName, groupName, consumerName, pendingTime, id);
-// }
+function claim({
+  streamName, groupName, consumerName, pendingTime, id,
+}) {
+  // 3600000 is one hour in milliseconds
+  // 'JUSTID' only returns the ID's claimed and not the messages, and so does not increment the retry counter
+  return redis.xclaim(streamName, groupName, consumerName, pendingTime || 3600000, id, 'JUSTID');
+}
 
 /**
  * Creates a consumer group.
@@ -201,34 +207,16 @@ function readFromConsumerGroup({
  * @param {string} groupName - Name of the consumer group
  */
 function createConsumerGroup(streamName, groupName) {
-  // need to make sure that creating a stream post-MKSTREAM doesn't conflict
   return redis.xgroup('CREATE', streamName, groupName, '$', 'MKSTREAM');
 }
 
-// TODO: this is still a WIP, and is more pseudo-code at this point
-// async function handlePending({
-//   streamName, groupName, maxIdleTime, count,
-// }) {
-//   const pendingItems = getPending({
-//     streamName, groupName, count,
-//   });
+function handleDeadLetterItem(itemId) {
 
-//   for (const pendingItem in pendingItems) {
-//     const { itemId, itemIdleTime } = pendingItem;
-
-//     if (itemIdleTime >= maxIdleTime) {
-//       try {
-//         await claim(streamName, groupName, itemId);
-//       } catch (e) {
-//         console.warn(`'${this.consumerName}' failed to claim item for ${groupName}: ${e}`);
-//       }
-//     }
-//   }
-// }
+}
 
 class EventStreamClient {
-  constructor(options) {
-    const configuredOptions = setOptions(options);
+  constructor(config) {
+    const configuredOptions = setConfiguration(config);
     Object.assign(this, configuredOptions);
 
     redis = connect(this.ctxOptions);
@@ -296,64 +284,100 @@ class EventStreamClient {
     if (typeof streamName !== 'string') throw Error('streamName must be included and must be a string');
     if (typeof workerFunction !== 'function') throw Error('workerFunction must be included and must be a function');
 
-    // safety flag to turn off processing of messages if something goes pear-shaped
-    if (this.shouldProcess) {
-      // ensure consumer group exists and ignore error if it already does
-      // (Redis API returns an err for some reason)
-      try {
-        await createConsumerGroup(streamName, groupName);
-      } catch (e) {
-        // ignore
+    this.streamName = streamName;
+    this.groupName = groupName;
+
+    setInterval(async () => await this.handlePending(), this.pendingInterval);
+
+    // ensure consumer group exists and ignore error if it already does
+    // (Redis API returns an err for some reason)
+    try {
+      await createConsumerGroup(streamName, groupName);
+    } catch (e) {
+      // ignore
+    }
+
+    const run = async ({ lastId, checkBacklog }) => {
+      // just needed because of how we recursively call this
+      let readId = lastId;
+      let backlog = checkBacklog;
+
+      let streamData;
+
+      if (!backlog) {
+        readId = READ_GROUP_EVENT_ID.NEW_ITEMS;
       }
 
-      const run = async ({ lastId, checkBacklog }) => {
-        // just needed because of how we recursively call this
-        let readId = lastId;
-        let backlog = checkBacklog;
+      try {
+        streamData = await readFromConsumerGroup({
+          groupName,
+          consumerName: this.consumerName,
+          streamName,
+          shouldBlock: this.shouldBlock,
+          blockTime: readTimeout,
+          id: readId,
+        });
+      } catch (e) {
+        console.error(`readFromConsumerGroup error: ${e}`);
+      }
 
-        let streamData;
+      if (isStreamEmpty(streamData)) {
+        backlog = false;
+      } else {
+        const deserializedEvents = deserialize(streamData);
 
-        if (!backlog) {
-          readId = READ_GROUP_EVENT_ID.NEW_ITEMS;
-        }
+        for (const event of deserializedEvents) {
+          try {
+            const { id, ...data } = event;
 
-        try {
-          streamData = await readFromConsumerGroup({
-            groupName,
-            consumerName: this.consumerName,
-            streamName,
-            shouldBlock: this.shouldBlock,
-            blockTime: readTimeout,
-            id: readId,
-          });
-        } catch (e) {
-          console.error(`readFromConsumerGroup error: ${e}`);
-        }
-
-        if (isStreamEmpty(streamData)) {
-          backlog = false;
-        } else {
-          const deserializedEvents = deserialize(streamData);
-
-          for (const event of deserializedEvents) {
-            try {
-              const { id, ...data } = event;
-
-              await workerFunction({ ...data });
-              await ack({ streamName, groupName, id });
-              readId = id;
-            } catch (e) {
-              console.error(e);
-            }
+            await workerFunction({ ...data });
+            await ack({ streamName, groupName, id });
+            readId = id;
+          } catch (e) {
+            console.error(e);
           }
         }
+      }
 
-        setTimeout(run.bind(null,
-          { lastId: readId, checkBacklog: backlog }),
-        readTimeout);
-      };
+      setTimeout(run.bind(null,
+        { lastId: readId, checkBacklog: backlog }),
+      readTimeout);
+    };
 
-      run({ lastId: READ_GROUP_EVENT_ID.FIRST_RUN, checkBacklog: true });
+    run({ lastId: READ_GROUP_EVENT_ID.FIRST_RUN, checkBacklog: true });
+  }
+
+  async handlePending() {
+    const pendingItems = await getPending({
+      streamName: this.streamName,
+      groupName: this.groupName,
+      count: this.pendingItemsCount,
+    });
+
+    console.log('pendingItems', pendingItems)
+
+    for (const pendingItem in pendingItems) {
+      // TODO: figure out what actual properties are
+      const { consumerName, itemId, itemIdleTime } = pendingItem;
+
+      // if an item in the PEL belongs to this consumer, no need to claim it again
+      // assuming its able to be processed and won't end up in the DLQ, it should be
+      // processed with the next 'readFromConsumerGroup()'
+      if (this.consumerName === consumerName) {
+        continue;
+      }
+  
+      if (itemIdleTime >= this.maxIdleTime) {
+        try {
+          await claim({
+            streamName: this.streamName,
+            groupName: this.groupName,
+            consumerName: this.consumerName,
+            itemId, });
+        } catch (e) {
+          console.warn(`'${this.consumerName}' failed to claim item for ${this.groupName}: ${e}`);
+        }
+      }
     }
   }
 }

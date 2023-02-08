@@ -40,7 +40,7 @@ describe('EventStreamClient', () => {
   const streamName = 'test-stream';
 
   beforeEach(async () => {
-    streamClient = new EventStreamClient();
+    streamClient = new EventStreamClient({pendingInterval: 10});
     await resetStream(streamName);
   });
 

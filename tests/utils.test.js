@@ -9,10 +9,11 @@ const { expect } = chai;
 const {
   mapObjToStringArray,
   deserialize,
+  getPendingItemsFormatted,
 } = require('../src/utils');
 const { FIELD_FOR_COMPRESSED_VALUES, PAYLOAD_PREFIX } = require('../src/common-vals');
 
-describe('util', () => {
+describe('utils', () => {
   describe('#mapObjToStringArray', () => {
     it('should map an object\'s key and value to array format', () => {
       const convertedString = mapObjToStringArray({ key: 'value' });
@@ -66,5 +67,21 @@ describe('util', () => {
         { id: '1582419017278-1', field1: 'value1', field2: 'value2' },
       ]);
     });
+  });
+
+  describe('#getPendingItemsFormatted', () => {
+    it('should format the pending items in an array of objects', () => {
+      const pendingItems = [ [ '1675834832880-0', 'consumer1', 51, 1 ] ]
+      const pendingItemsFormatted = getPendingItemsFormatted(pendingItems)
+
+      expect(pendingItemsFormatted).to.deep.equalInAnyOrder([
+        {
+          itemId: '1675834832880-0',
+          consumerName: 'consumer1',
+          timeSinceLastDelivery: 51,
+          numDeliveries: 1,
+        }
+      ])
+    })
   });
 });
